@@ -5,6 +5,11 @@ Created on Mon Aug  7 17:08:44 2017
 @author: eilers
 """
 
+"""
+This file is part of the cygnet project.
+Copyright 2017 Anna-Christina Eilers.
+"""
+
 import matplotlib
 matplotlib.use('Agg')
 import numpy as np
