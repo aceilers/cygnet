@@ -7,21 +7,15 @@ Created on Tue Aug  8 20:10:52 2017
 """
 
 import numpy as np
-from astropy.table import Table
+from astropy.table import Table, hstack
 import os.path
 import subprocess
 from astropy.io import fits
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+import pickle
 
-# -------------------------------------------------------------------------------
-
-""" 
-TO DO:
-    1. get APOGEE spectra
-    2. run Cannon normalization and build input data file
-    3. write file
-"""
+from functions_cannon import NormalizeData
 
 # -------------------------------------------------------------------------------
 # download data
@@ -41,21 +35,24 @@ apogee_table = fits.open(destination)
 apogee_data = apogee_table[1].data                         
 apogee_data = apogee_data[apogee_data['DEC'] > -90.0]
 
- # download TGAS data                  
-for q in range(16):
-    fn = 'TgasSource_000-000-{:03d}.fits'.format(q)
-    url = 'http://cdn.gea.esac.esa.int/Gaia/tgas_source/fits/' + fn
-    destination = './data/' + fn
-    cmd = 'wget ' + url + ' -O ' + destination
-    if not os.path.isfile(destination):
-        subprocess.call(cmd, shell = True)
-    print("opening " + destination)
-    tgas_table = fits.open(destination)
-    if q == 0:
-        tgas_data = tgas_table[1].data
-    else:
-        tgas_data = np.append(tgas_data, tgas_table[1].data)
-    
+ # download TGAS data    
+fn = 'stacked_tgas.fits'
+url = 'http://s3.adrian.pw/' + fn
+destination = './data/'+ fn
+cmd = 'wget ' + url + ' -O ' + destination
+if not os.path.isfile(destination):
+    subprocess.call(cmd, shell = True)
+print("opening " + destination)
+tgas_table = fits.open(destination)
+tgas_data = tgas_table[1].data
+                      
+                      
+# -------------------------------------------------------------------------------
+# cut in logg <= 2:
+# -------------------------------------------------------------------------------
+
+apogee_data = apogee_data[np.logical_and(apogee_data['LOGG'] <= 2., apogee_data['LOGG'] >= 0)]
+                          
 # -------------------------------------------------------------------------------
 # match TGAS and APOGEE
 # -------------------------------------------------------------------------------
@@ -74,34 +71,162 @@ print('matched entries: {}'.format(len(tgas_data)))
 # get APOGEE spectra
 # -------------------------------------------------------------------------------
 
-for fn, loc in zip(apogee_data['FILE'], apogee_data['LOCATION_ID']):
-    url = 'https://data.sdss.org/sas/dr14/apogee/spectro/redux/r8/stars/' + substr \
-    + '/' + substr + '.' + subsubstr + '/' + str(loc) + '/' + fn
-    print url
+found = np.ones_like(id_tgas, dtype=bool)
+
+for i, (fn2, loc) in enumerate(zip(apogee_data['FILE'], apogee_data['LOCATION_ID'])):
+    fn = fn2.replace('apStar-r8', 'aspcapStar-r8-l31c.2')
+    urlbase = 'https://data.sdss.org/sas/dr14/apogee/spectro/redux/r8/stars/' + substr \
+    + '/' + substr + '.' + subsubstr + '/' + str(loc) + '/'
+    url = urlbase + fn
+    url2 = urlbase + fn2
     destination = './data/spectra/' + fn
-    cmd = 'wget ' + url + ' -O ' + destination
-    if not os.path.isfile(destination):
-        subprocess.call(cmd, shell = True)
+    destination2 = './data/spectra/' + fn2
+    if not (os.path.isfile(destination) or os.path.isfile(destination2)):
+        try:
+            cmd = 'wget ' + url + ' -O ' + destination
+            print cmd
+            subprocess.call(cmd, shell = True)
+        except:
+            try:
+                cmd = 'wget ' + url2 + ' -O ' + destination2
+                print cmd
+                subprocess.call(cmd, shell = True)
+            except:
+                found[i] = False
+                     
+tgas_data = tgas_data[found]                     
+apogee_data = apogee_data[found]
+
+# remove missing files (code above doesn't work...)
+found = np.ones_like(id_tgas, dtype=bool)
+destination = './data/spectra/'
+for i in range(len(apogee_data['FILE'])):
+    print i
+    entry = apogee_data['FILE'][i]
+    entry = entry.replace('apStar-r8', 'aspcapStar-r8-l31c.2')
+    try:
+        hdulist = fits.open(destination + entry)
+    except:
+        print("not found!")
+        found[i] = False
+
+tgas_data = tgas_data[found]                     
+apogee_data = apogee_data[found]    
+
+print('spectra found for: {}'.format(len(tgas_data)))
+ 
+# -------------------------------------------------------------------------------
+# normalize spectra: functions
+# -------------------------------------------------------------------------------
+
+def LoadAndNormalizeData(file_spectra, file_name, destination):
+    
+    all_flux = np.zeros((len(file_spectra), 8575))
+    all_sigma = np.zeros((len(file_spectra), 8575))
+    all_wave = np.zeros((len(file_spectra), 8575))
+    
+    i=0
+    for entry in file_spectra:
+        print i
+        entry = entry.replace('apStar-r8', 'aspcapStar-r8-l31c.2')
+        hdulist = fits.open(destination + entry)
+        flux = hdulist[1].data
+        sigma = hdulist[2].data
+        header = hdulist[1].header
+        start_wl = header['CRVAL1']
+        diff_wl = header['CDELT1']
+        val = diff_wl * (len(flux)) + start_wl
+        wl_full_log = np.arange(start_wl, val, diff_wl)
+        wl_full = [10**aval for aval in wl_full_log]
+        all_wave[i] = wl_full        
+        all_flux[i] = flux
+        all_sigma[i] = sigma
+        i += 1
+        
+    data = np.array([all_wave, all_flux, all_sigma])
+    data_norm, continuum = NormalizeData(data.T)
+    
+    f = open('data/' + file_name, 'w')
+    pickle.dump(data_norm, f)
+    f.close()
+    
+    return data_norm, continuum
+
+def NormalizeData(dataall):
+        
+    Nlambda, Nstar, foo = dataall.shape
+    
+    pixlist = np.loadtxt('data/pixtest8_dr13.txt', usecols = (0,), unpack = 1)
+    pixlist = map(int, pixlist)
+    LARGE  = 1.                                                          # magic LARGE sigma value
+   
+    continuum = np.zeros((Nlambda, Nstar))
+    dataall_flat = np.ones((Nlambda, Nstar, 3))
+    for jj in range(Nstar):
+        bad_a = np.logical_or(np.isnan(dataall[:, jj, 1]), np.isinf(dataall[:,jj, 1]))
+        bad_b = np.logical_or(dataall[:, jj, 2] <= 0., np.isnan(dataall[:, jj, 2]))
+        bad = np.logical_or(np.logical_or(bad_a, bad_b), np.isinf(dataall[:, jj, 2]))
+        dataall[bad, jj, 1] = 1.
+        dataall[bad, jj, 2] = LARGE
+        var_array = LARGE**2 + np.zeros(len(dataall)) 
+        var_array[pixlist] = 0.000
+        
+        bad = dataall_flat[bad, jj, 2] > LARGE
+        dataall_flat[bad, jj, 1] = 1.
+        dataall_flat[bad, jj, 2] = LARGE
+        
+        take1 = np.logical_and(dataall[:,jj,0] > 15150, dataall[:,jj,0] < 15800)
+        take2 = np.logical_and(dataall[:,jj,0] > 15890, dataall[:,jj,0] < 16430)
+        take3 = np.logical_and(dataall[:,jj,0] > 16490, dataall[:,jj,0] < 16950)
+        ivar = 1. / ((dataall[:, jj, 2] ** 2) + var_array) 
+        fit1 = np.polynomial.chebyshev.Chebyshev.fit(x=dataall[take1,jj,0], y=dataall[take1,jj,1], w=ivar[take1], deg=2) # 2 or 3 is good for all, 2 only a few points better in temp 
+        fit2 = np.polynomial.chebyshev.Chebyshev.fit(x=dataall[take2,jj,0], y=dataall[take2,jj,1], w=ivar[take2], deg=2)
+        fit3 = np.polynomial.chebyshev.Chebyshev.fit(x=dataall[take3,jj,0], y=dataall[take3,jj,1], w=ivar[take3], deg=2)
+        continuum[take1, jj] = fit1(dataall[take1, jj, 0])
+        continuum[take2, jj] = fit2(dataall[take2, jj, 0])
+        continuum[take3, jj] = fit3(dataall[take3, jj, 0])
+        dataall_flat[:, jj, 0] = 1.0 * dataall[:, jj, 0]
+        dataall_flat[take1, jj, 1] = dataall[take1,jj,1]/fit1(dataall[take1, 0, 0])
+        dataall_flat[take2, jj, 1] = dataall[take2,jj,1]/fit2(dataall[take2, 0, 0]) 
+        dataall_flat[take3, jj, 1] = dataall[take3,jj,1]/fit3(dataall[take3, 0, 0]) 
+        dataall_flat[take1, jj, 2] = dataall[take1,jj,2]/fit1(dataall[take1, 0, 0]) 
+        dataall_flat[take2, jj, 2] = dataall[take2,jj,2]/fit2(dataall[take2, 0, 0]) 
+        dataall_flat[take3, jj, 2] = dataall[take3,jj,2]/fit3(dataall[take3, 0, 0]) 
+        
+    for jj in range(Nstar):
+        print "continuum_normalize_tcsh working on star", jj
+        bad_a = np.logical_not(np.isfinite(dataall_flat[:, jj, 1]))
+        bad_a = np.logical_or(bad_a, dataall_flat[:, jj, 2] <= 0.)
+        bad_a = np.logical_or(bad_a, np.logical_not(np.isfinite(dataall_flat[:, jj, 2])))
+        bad_a = np.logical_or(bad_a, dataall_flat[:, jj, 2] > 1.)                    # magic 1.
+        # grow the mask
+        bad = np.logical_or(bad_a, np.insert(bad_a, 0, False, 0)[0:-1])
+        bad = np.logical_or(bad, np.insert(bad_a, len(bad_a), False)[1:])
+        dataall_flat[bad, jj, 1] = 1.
+        dataall_flat[bad, jj, 2] = LARGE
+            
+    return dataall_flat, continuum
 
 # -------------------------------------------------------------------------------
 # normalize spectra
 # -------------------------------------------------------------------------------
 
-
-# -------------------------------------------------------------------------------
-# data quality check (remove -9999.9 etc.)
-# -------------------------------------------------------------------------------
-
-
-
-# -------------------------------------------------------------------------------
-# calculate K_MAG_ABS and Q
-# -------------------------------------------------------------------------------
-
+file_name = 'apogee_spectra_norm.pickle'
+destination = './data/' + file_name
+if not os.path.isfile(destination):
+    data_norm, continuum = LoadAndNormalizeData(apogee_data['FILE'], file_name, destination = './data/spectra/')
 
 # -------------------------------------------------------------------------------
 # save files!
 # -------------------------------------------------------------------------------
+
+apogee_data = Table(apogee_data)
+tgas_data = Table(tgas_data)
+training_labels = hstack([apogee_data, tgas_data])
+
+f = open('data/training_labels_apogee_tgas.pickle', 'w')
+pickle.dump(training_labels, f)
+f.close()
 
 
 

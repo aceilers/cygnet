@@ -20,9 +20,6 @@ import pickle
 from datetime import datetime
 from astropy.table import Column
 
-
-from functions_cannon import DownloadData, CompileLabelsDianeCluster, LoadDataAndNormalizeNew, DownloadDataKepler, CompileLabelsKepler, get_pivots_and_scales, DownloadDataJohanna
-
 from matplotlib import rc
 rc('text', usetex=False)
 rc('font', family='serif')
@@ -39,7 +36,7 @@ matplotlib.rcParams['xtick.labelsize'] = lsize
 # functions
 # -------------------------------------------------------------------------------
 
-def Plot1to1(expectations, tr_label_input_new, K, labels, Nlabels):
+def Plot1to1(expectations, tr_label_input_new, K, labels, Nlabels, name):
     
     for i, l in enumerate(labels):
         orig = tr_label_input_new[:, i]
@@ -58,23 +55,25 @@ def Plot1to1(expectations, tr_label_input_new, K, labels, Nlabels):
         plt.tight_layout()
         plt.legend(loc=2, fontsize=14, frameon=True)
         plt.title('K = {}'.format(K), fontsize=lsize)
-        plt.savefig('hmf/1to1_{0}_{1}.pdf'.format(l, K))
+        plt.savefig('plots/1to1_{0}_K{1}_{2}.pdf'.format(l, K, name))
         plt.close() 
 
-def cross_validate(data, ivar, K):
+def cross_validate(data, ivar, K, folds):
     N, D = data.shape
+    subset = np.random.randint(folds, size=N)
     expectations = np.zeros((N, D))
-    for loo_index in range(N):
-        print(loo_index)
-        expectations[loo_index, :] = validate(data, ivar, K, loo_index)
+    for ss in range(folds):
+        print(ss)
+        leave_out = (subset == ss)
+        expectations[leave_out, :] = validate(data, ivar, K, leave_out)
     return expectations
 
-def validate(data, ivar, K, loo_index):
+def validate(data, ivar, K, leave_out):
     N, D = data.shape
     indices = np.arange(N)
-    train = indices[indices != loo_index]
+    train = indices[np.logical_not(leave_out)]
     mu, A, G = HMF(data[train, :], ivar[train, :], K)
-    expectation = HMF_test(mu, G, (data[loo_index, :])[None, :], (ivar[loo_index, :])[None, :])
+    expectation = HMF_test(mu, G, (data[leave_out, :]), (ivar[leave_out, :]))
     return expectation 
     
 def HMF_test(mu, G, newdata, newivar):
@@ -183,16 +182,44 @@ def DataExpectation(mu, A, G, Nlabels):
 # loading training labels and spectra
 # -------------------------------------------------------------------------------
 
-train_labels = Table.read('training_set/train_labels_apogee_tgas2.txt', format='ascii', header_start = 0)
+print 'loading training labels...'
+f = open('data/training_labels_apogee_tgas.pickle', 'r')
+training_labels = pickle.load(f)
+f.close()
 
 print 'loading normalized spectra...'
-f = open('training_set/all_data_norm_application4.pickle', 'r')    
+f = open('data/apogee_spectra_norm.pickle', 'r')    
 spectra = pickle.load(f)
 f.close()
 
 wl = spectra[:, 0, 0]
 fluxes = spectra[:, :, 1].T
 ivars = (1./(spectra[:, :, 2]**2)).T 
+        
+# -------------------------------------------------------------------------------
+# data masking
+# -------------------------------------------------------------------------------
+        
+masking = training_labels['K'] < 0.
+training_labels = training_labels[~masking]
+fluxes = fluxes[~masking]
+ivars = ivars[~masking]
+
+# -------------------------------------------------------------------------------
+# calculate K_MAG_ABS and Q
+# -------------------------------------------------------------------------------
+
+# M = m - 5(log d - 1)
+# sigma_M = np.sqrt(sigma_m^2 + sigma_d^2/d^2)
+# parallax = 1/d
+# parallaxes given in milli arcsec
+
+Q = 10**(0.2*training_labels['K']) * training_labels['parallax']/100.                    # assumes parallaxes is in mas
+Q_err = training_labels['parallax_error'] * 10**(0.2*training_labels['K'])/100. 
+Q = Column(Q, name = 'Q_MAG')
+Q_err = Column(Q_err, name = 'Q_MAG_ERR')
+training_labels.add_column(Q, index = 12)
+training_labels.add_column(Q_err, index = 13)
 
 # -------------------------------------------------------------------------------
 # latex
@@ -202,98 +229,62 @@ latex = {}
 latex["TEFF"] = r"$T_{\rm eff}$"
 latex["LOGG"] = r"$\log g$"
 latex["FE_H"] = r"$\rm [Fe/H]$"
-latex["ALPHA_FE"] = r"$[\alpha/\rm Fe]$"
-latex["KMAG_ABS"] = r"$M_K$"
+latex["ALPHA_M"] = r"$[\alpha/\rm M]$"
 latex["C_FE"] = r"$\rm [C/Fe]$"
 latex["N_FE"] = r"$\rm [N/Fe]$"
-latex["WL_TEFF"] = r"$\lambda_{T_{\rm eff}}$"
-latex["WL_LOGG"] = r"$\lambda_{\log g}$"
-latex["WL_FE_H"] = r"$\lambda_{\rm [Fe/H]}$"
-latex["WL_ALPHA_FE"] = r"$\lambda_{[\alpha/\rm Fe]}$"
-latex["Q"] = r"$Q$"
+latex["Q_MAG"] = r"$Q$"
+
+plot_limits = {}
+plot_limits['TEFF'] = (3000, 7000)
+plot_limits['FE_H'] = (-2.5, 1)
+plot_limits['LOGG'] = (0, 2.5)
+plot_limits['ALPHA_M'] = (-.2, .6)
+plot_limits['Q_MAG'] = (0, .5)
+plot_limits['N_FE'] = (-.2, .6)
+plot_limits['C_FE'] = (-.2, .3)
 
 # -------------------------------------------------------------------------------
 # 
 # -------------------------------------------------------------------------------
 
-def make_label_input(labels, train_labels, input_ids):
-    tr_label_input = np.array([train_labels[x] for x in labels]).T
-    tr_label_input = tr_label_input[input_ids, :]
-    tr_delta_input = np.array([train_labels[x+'_ERR'] for x in labels]).T
-    tr_delta_input = tr_delta_input[input_ids, :]    
-    return tr_label_input, tr_delta_input
+def make_label_input(labels, training_labels):
+    tr_label_input = np.array([training_labels[x] for x in labels]).T
+    tr_ivar_input = 1./((np.array([training_labels[x+'_ERR'] for x in labels]).T)**2)
+    for x in range(tr_label_input.shape[1]):
+        bad = tr_label_input[:, x] < -100. # magic
+        tr_label_input[bad, x] = np.median(tr_label_input[:, x])
+        tr_ivar_input[bad, x] = 0.
+    return tr_label_input, tr_ivar_input
 
-
-labels = ['TEFF', 'FE_H', 'LOGG', 'ALPHA_FE', 'Q', 'N_FE', 'C_FE']
+labels = np.array(['TEFF', 'FE_H', 'LOGG', 'ALPHA_M', 'Q_MAG', 'N_FE', 'C_FE'])
+Nlabels = len(labels)
 latex_labels = [latex[l] for l in labels]
-tr_label_input, tr_delta_input = make_label_input(labels, train_labels, input_ids)
+tr_label_input, tr_ivar_input = make_label_input(labels, training_labels)
 
-tr_label_input_orig = 1.0 * tr_label_input
-tr_delta_input_orig = 1.0 * tr_delta_input
+# 100 best objects (714)
+input_ids = (tr_ivar_input[:, labels == 'Q_MAG'] > 100.).flatten()
+tr_label_input = tr_label_input[input_ids, :]
+tr_ivar_input = tr_ivar_input[input_ids, :]  
 
-
-## for previously missing labels, last 46 stars without Fe/H
-#f = open('apogee_tgas2/more_labels/test_labels_5lab_66diane_50apogee_predicted_new_deriv_old_seed3.pickle', 'r')
-#test_labels_prev = pickle.load(f)
-#f.close()
-#test_labels_prev = test_labels_prev[:, 1:]
-#
-#for i in range(len(ids_tgas), len(tr_label_input)):
-#    tr_label_input[i, -1] = test_labels_prev[i, -1]
-#    tr_delta_input[i, -1] = 3 # magic!
-
-ids = train_labels['APOGEE_ID'][input_ids]
-
-fluxes_tot = fluxes[input_ids, :]   #np.vstack((fluxes_johanna, fluxes))[all_ids, :]
-ivars_tot = ivars[input_ids, :]     #np.vstack((ivars_johanna, ivars))[all_ids, :]
-
-
-
-tr_label_input_new = np.concatenate((tr_label_input, fluxes_tot), axis=1)
-tr_ivar_input_new = np.concatenate((1./(tr_delta_input**2), ivars_tot), axis=1)
-
+fluxes = fluxes[input_ids, :]   
+ivars = ivars[input_ids, :]     
 
 # -------------------------------------------------------------------------------
-# new...
+# HMF
 # -------------------------------------------------------------------------------
 
+data = np.concatenate((tr_label_input, fluxes), axis=1)
+ivar = np.concatenate((tr_ivar_input, ivars), axis=1)
 
-#data, data_err = PrepareData(fluxes_tot, ivars_tot, tr_label_input, tr_delta_input, mean=True)
+np.random.seed(42)
 
-data = 1.0 * tr_label_input_new
-ivar = 1.0 * tr_ivar_input_new
-
-
+folds = 5
 K = 3
-
-# i: number of objects, j: number of pixels (8575), k: number of basis components
-# best guess for g_jk and a_ik? 
-aa = datetime.now()
-mu, A, G = HMF(data, ivar, K)
-bb = datetime.now()
-cc = bb - aa
-mins = (cc.seconds + cc.microseconds/1000000.)/60.
-print('{} mins. '.format(round(mins, 2)))
-
-Nlabels = 7
-
-labels = ['TEFF', 'FE_H', 'LOGG', 'ALPHA_FE', 'Q', 'N_FE', 'C_FE']
-plot_limits = {}
-plot_limits['TEFF'] = (3000, 7000)
-plot_limits['FE_H'] = (-2.5, 1)
-plot_limits['LOGG'] = (0, 2.5)
-plot_limits['ALPHA_FE'] = (-.2, .6)
-plot_limits['Q'] = (0, .5)
-plot_limits['N_FE'] = (-.2, .6)
-plot_limits['C_FE'] = (-.2, .3)
-
-
-# expected_data, expected_labels = DataExpectation(mu, A, G, Nlabels)
-
-for i in range(10):
-    K += 2
-    expectations = cross_validate(data, ivar, K)
-    Plot1to1(expectations, tr_label_input_new, K, labels, Nlabels)
+# cross validation
+for i in range(3):
+    expectations = cross_validate(data, ivar, K, folds)
+    Plot1to1(expectations, tr_label_input, K, labels, Nlabels, name = 'train714')
+    K += 2    
 
 # -------------------------------------------------------------------------------'''
 
