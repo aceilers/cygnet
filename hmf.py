@@ -19,6 +19,7 @@ import seaborn as sns
 import pickle
 from datetime import datetime
 from astropy.table import Column
+import corner
 
 from matplotlib import rc
 rc('text', usetex=False)
@@ -36,17 +37,18 @@ matplotlib.rcParams['xtick.labelsize'] = lsize
 # functions
 # -------------------------------------------------------------------------------
 
-def Plot1to1(expectations, tr_label_input_new, K, labels, Nlabels, name):
+def Plot1to1(expectations, tr_label_input_new, tr_ivar_input, K, labels, Nlabels, name):
     
     for i, l in enumerate(labels):
         orig = tr_label_input_new[:, i]
         cannon = expectations[:, i]
         scatter = np.round(np.std(orig-cannon), 5)
         bias = np.round(np.mean(orig-cannon), 5)    
-        xx = [-10000, 10000]
         fig = plt.figure(figsize=(6, 6))
-        plt.scatter(orig, cannon, color=colors[-2], label=' bias = {0} \n scatter = {1}'.format(bias, scatter), marker = 'o')
-        plt.plot(xx, xx, color=colors[2], linestyle='--')
+        cmap = 'Greys'
+        plt.scatter(orig, cannon, color=tr_ivar_input[:, i], label=' bias = {0} \n scatter = {1}'.format(bias, scatter), marker = 'o', cmap = cmap)
+        plt.plot(plot_limits[l], plot_limits[l], color=colors[2], linestyle='--')
+        plt.colorbar()
         plt.xlabel(r'reference labels {}'.format(latex[l]), size=lsize)
         plt.ylabel(r'inferred values {}'.format(latex[l]), size=lsize)
         plt.tick_params(axis=u'both', direction='in', which='both')
@@ -62,19 +64,20 @@ def cross_validate(data, ivar, K, folds):
     N, D = data.shape
     subset = np.random.randint(folds, size=N)
     expectations = np.zeros((N, D))
+    A, G = None, None
     for ss in range(folds):
         print(ss)
         leave_out = (subset == ss)
-        expectations[leave_out, :] = validate(data, ivar, K, leave_out)
+        expectations[leave_out, :], A, G = validate(data, ivar, K, leave_out, A, G)
     return expectations
 
-def validate(data, ivar, K, leave_out):
+def validate(data, ivar, K, leave_out, A, G):
     N, D = data.shape
     indices = np.arange(N)
     train = indices[np.logical_not(leave_out)]
-    mu, A, G = HMF(data[train, :], ivar[train, :], K)
+    mu, A, G = HMF(data[train, :], ivar[train, :], K, A, G)
     expectation = HMF_test(mu, G, (data[leave_out, :]), (ivar[leave_out, :]))
-    return expectation 
+    return expectation, A, G
     
 def HMF_test(mu, G, newdata, newivar):
     N, D = newdata.shape
@@ -83,7 +86,7 @@ def HMF_test(mu, G, newdata, newivar):
     A = HMF_astep(data, newivar, G, regularize=False)
     return mu + np.dot(A, G)
 
-def HMF(inputdata, ivar, K):
+def HMF(inputdata, ivar, K, A = None, G = None):
     """
     Bugs:
         - not commented
@@ -92,12 +95,13 @@ def HMF(inputdata, ivar, K):
     
     N, D = inputdata.shape
     assert ivar.shape == (N, D)
-    tiny = 1e-6 # magic
+    tiny = 1e-4 # magic
 
     # don't infer the mean; just hard-estimate it and subtract
     mu = HMF_mean(inputdata, ivar)
     data = inputdata - mu[None, :]
-    A, G = HMF_initialize(data, ivar, K)
+    if A is None:
+        A, G = HMF_initialize(data, ivar, K)
     
     chisq = np.Inf
     converged = False
@@ -266,6 +270,9 @@ input_ids = (tr_ivar_input[:, labels == 'Q_MAG'] > 100.).flatten()
 tr_label_input = tr_label_input[input_ids, :]
 tr_ivar_input = tr_ivar_input[input_ids, :]  
 
+corner.corner(tr_label_input, labels = latex_labels)
+plt.savefig('plots/corner_{}.pdf'.format(len(tr_label_input)))
+
 fluxes = fluxes[input_ids, :]   
 ivars = ivars[input_ids, :]     
 
@@ -279,11 +286,11 @@ ivar = np.concatenate((tr_ivar_input, ivars), axis=1)
 np.random.seed(42)
 
 folds = 5
-K = 3
+K = 7
 # cross validation
-for i in range(3):
+for i in range(10):
     expectations = cross_validate(data, ivar, K, folds)
-    Plot1to1(expectations, tr_label_input, K, labels, Nlabels, name = 'train714')
+    Plot1to1(expectations, tr_label_input, tr_ivar_input, K, labels, Nlabels, name = 'train714')
     K += 2    
 
 # -------------------------------------------------------------------------------'''
