@@ -43,10 +43,11 @@ def Plot1to1(expectations, tr_label_input_new, tr_ivar_input, K, labels, Nlabels
         orig = tr_label_input_new[:, i]
         cannon = expectations[:, i]
         scatter = np.round(np.std(orig-cannon), 5)
-        bias = np.round(np.mean(orig-cannon), 5)    
-        fig = plt.figure(figsize=(6, 6))
-        cmap = 'Greys'
-        plt.scatter(orig, cannon, color=tr_ivar_input[:, i], label=' bias = {0} \n scatter = {1}'.format(bias, scatter), marker = 'o', cmap = cmap)
+        bias = np.round(np.mean(orig-cannon), 5)  
+        chi2 = np.round(np.sum(0.5*(orig-cannon)**2 * tr_ivar_input[:, i]), 2)
+        fig = plt.figure(figsize=(7, 6))
+        cmap = 'viridis'
+        plt.scatter(orig, cannon, c=tr_ivar_input[:, i], label=' bias = {0} \n scatter = {1}'.format(bias, scatter), marker = 'o', cmap = cmap, vmin = np.percentile(tr_ivar_input[:, i], 2.5), vmax = np.percentile(tr_ivar_input[:, i], 97.5))
         plt.plot(plot_limits[l], plot_limits[l], color=colors[2], linestyle='--')
         plt.colorbar()
         plt.xlabel(r'reference labels {}'.format(latex[l]), size=lsize)
@@ -56,7 +57,7 @@ def Plot1to1(expectations, tr_label_input_new, tr_ivar_input, K, labels, Nlabels
         plt.ylim(plot_limits[l])
         plt.tight_layout()
         plt.legend(loc=2, fontsize=14, frameon=True)
-        plt.title('K = {}'.format(K), fontsize=lsize)
+        plt.title('K = {0}, $\chi^2 = {1}$'.format(K, chi2), fontsize=lsize)
         plt.savefig('plots/1to1_{0}_K{1}_{2}.pdf'.format(l, K, name))
         plt.close() 
 
@@ -95,7 +96,7 @@ def HMF(inputdata, ivar, K, A = None, G = None):
     
     N, D = inputdata.shape
     assert ivar.shape == (N, D)
-    tiny = 1e-4 # magic
+    tiny = 1e-5 # magic
 
     # don't infer the mean; just hard-estimate it and subtract
     mu = HMF_mean(inputdata, ivar)
@@ -187,12 +188,12 @@ def DataExpectation(mu, A, G, Nlabels):
 # -------------------------------------------------------------------------------
 
 print 'loading training labels...'
-f = open('data/training_labels_apogee_tgas.pickle', 'r')
+f = open('data/training_labels_apogee_hip.pickle', 'r')
 training_labels = pickle.load(f)
 f.close()
 
 print 'loading normalized spectra...'
-f = open('data/apogee_spectra_norm.pickle', 'r')    
+f = open('data/apogee_spectra_norm_hip.pickle', 'r')    
 spectra = pickle.load(f)
 f.close()
 
@@ -255,9 +256,16 @@ def make_label_input(labels, training_labels):
     tr_label_input = np.array([training_labels[x] for x in labels]).T
     tr_ivar_input = 1./((np.array([training_labels[x+'_ERR'] for x in labels]).T)**2)
     for x in range(tr_label_input.shape[1]):
-        bad = tr_label_input[:, x] < -100. # magic
+        bad = np.logical_or(tr_label_input[:, x] < -100., tr_label_input[:, x] > 9000.) # magic
         tr_label_input[bad, x] = np.median(tr_label_input[:, x])
         tr_ivar_input[bad, x] = 0.
+    # remove one outlier in T_eff and [N/Fe]!
+    bad = tr_label_input[:, 0] > 5200.
+    tr_label_input[bad, 0] = np.median(tr_label_input[:, 0])
+    tr_ivar_input[bad, 0] = 0.  
+    bad = tr_label_input[:, 5] < -0.6
+    tr_label_input[bad, 5] = np.median(tr_label_input[:, 5])
+    tr_ivar_input[bad, 5] = 0.                   
     return tr_label_input, tr_ivar_input
 
 labels = np.array(['TEFF', 'FE_H', 'LOGG', 'ALPHA_M', 'Q_MAG', 'N_FE', 'C_FE'])
@@ -265,8 +273,9 @@ Nlabels = len(labels)
 latex_labels = [latex[l] for l in labels]
 tr_label_input, tr_ivar_input = make_label_input(labels, training_labels)
 
+
 # 100 best objects (714)
-input_ids = (tr_ivar_input[:, labels == 'Q_MAG'] > 100.).flatten()
+input_ids = np.arange(len(tr_label_input)) # (tr_ivar_input[:, labels == 'Q_MAG'] > 200.).flatten() # magic
 tr_label_input = tr_label_input[input_ids, :]
 tr_ivar_input = tr_ivar_input[input_ids, :]  
 
@@ -286,11 +295,16 @@ ivar = np.concatenate((tr_ivar_input, ivars), axis=1)
 np.random.seed(42)
 
 folds = 5
-K = 7
+K = 3
+name = 'train162'
+
 # cross validation
 for i in range(10):
     expectations = cross_validate(data, ivar, K, folds)
-    Plot1to1(expectations, tr_label_input, tr_ivar_input, K, labels, Nlabels, name = 'train714')
+    Plot1to1(expectations, tr_label_input, tr_ivar_input, K, labels, Nlabels, name)
+    f = open('plots/results_data/data_K{0}_{1}.pickle'.format(K, name), 'w')
+    pickle.dump(expectations, f)
+    f.close()
     K += 2    
 
 # -------------------------------------------------------------------------------'''
