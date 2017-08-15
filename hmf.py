@@ -127,7 +127,7 @@ def HMF_train(inputdata, ivar, K, A = None, G = None):
 
         cc = HMF_chisq(data, ivar, A, G)
         if cc > chisq:
-            raise ValueError("chi-squared got worse!")
+            print("chi-squared got worse!")
         if cc > chisq - tiny: # dumb
             converged = True
         chisq = cc
@@ -330,7 +330,7 @@ ivars = ivars[input_ids, :]
 # HMF
 # -------------------------------------------------------------------------------
 
-nodata = False
+nodata = True
 if nodata:
     data = 1. * tr_label_input
     ivar = 1. * tr_ivar_input
