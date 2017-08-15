@@ -133,7 +133,7 @@ def HMF_initialize(data, ivar, K):
     G = v[:K, :]    
     return A, G
 
-def HMF_astep(data, ivar, G, regularize=True):
+def HMF_astep(data, ivar, G):
     """
     svd trick needs to be checked!
     """
@@ -143,13 +143,13 @@ def HMF_astep(data, ivar, G, regularize=True):
     A = np.zeros((N, K))
     
     for i in range(N):
-        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T)
+        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T) + np.eye(D) # prior
         F_vector = np.dot(G, ivar[i,:] * data[i,:])
         A[i, :] = np.linalg.solve(G_matrix, F_vector)
 
-    if regularize:
-        u, s, v = np.linalg.svd(A, full_matrices = False)
-        A = np.dot(u, v)
+    # now post-process A to have unit variance
+    u, s, v = np.linalg.svd(A, full_matrices = False)
+    A = np.dot(u, v)
     
     return A
 
