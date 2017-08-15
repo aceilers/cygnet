@@ -353,7 +353,7 @@ if noisify:
 
 # cross validation
 for i in range(5):
-    expectations = cross_validate(data, ivar, K, folds)
+    expectations = cross_validate(data, ivar, K, 4, folds)
     Plot1to1(expectations, data, ivar, K, labels, Nlabels, name)
     f = open('plots/results_data/data_K{0}_{1}.pickle'.format(K, name), 'w')
     pickle.dump(expectations, f)
