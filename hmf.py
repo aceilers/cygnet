@@ -96,7 +96,7 @@ def HMF_test(mu, G, newdata, newivar):
     N, D = newdata.shape
     assert newivar.shape == (N, D)
     data = newdata - mu[None, :]
-    A = HMF_astep(data, newivar, G, regularize=False)
+    A = HMF_astep(data, newivar, G)
     return mu + np.dot(A, G)
 
 def HMF_train(inputdata, ivar, K, A = None, G = None):
@@ -153,14 +153,14 @@ def HMF_astep(data, ivar, G):
     A = np.zeros((N, K))
     
     for i in range(N):
-        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T) + np.eye(D) # prior
-        F_vector = np.dot(G, ivar[i,:] * data[i,:])
+        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T) + np.eye(K) # prior
+        F_vector = np.dot(G, ivar[i, :] * data[i, :])
         A[i, :] = np.linalg.solve(G_matrix, F_vector)
 
     # now post-process A to have unit variance
     u, s, v = np.linalg.svd(A, full_matrices = False)
     A = np.dot(u, v)
-    
+
     return A
 
 def HMF_gstep(data, ivar, A):
@@ -328,7 +328,7 @@ ivars = ivars[input_ids, :]
 # HMF
 # -------------------------------------------------------------------------------
 
-nodata = True
+nodata = False
 if nodata:
     data = 1. * tr_label_input
     ivar = 1. * tr_ivar_input
@@ -338,9 +338,9 @@ else:
 
 np.random.seed(42)
 
-folds = 5
+folds = 2
 K = 1 # has to be less than the number of dimensions
-name = 'nodata_ivartest1e3_testdatamedian'
+name = 'ivartest0_testdatamedian'
 
 
 N, D = data.shape
