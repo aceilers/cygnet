@@ -338,7 +338,7 @@ else:
 
 np.random.seed(42)
 
-folds = 2
+folds = 5
 K = 1 # has to be less than the number of dimensions
 name = 'ivartest0_testdatamedian'
 
