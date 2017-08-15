@@ -1,7 +1,6 @@
 # cygnet 
-=======
 
-a linear probabilistic approach to modelling stellar spectra
+a linear probabilistic approach to modelling stellar spectra. 
 
 
 Authors
