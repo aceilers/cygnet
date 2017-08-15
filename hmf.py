@@ -61,27 +61,37 @@ def Plot1to1(expectations, tr_label_input_new, tr_ivar_input, K, labels, Nlabels
         plt.savefig('plots/1to1_{0}_K{1}_{2}.pdf'.format(l, K, name))
         plt.close() 
 
-def cross_validate(data, ivar, K, folds):
+def cross_validate(data, ivar, K, d, folds):
+    """
+    data: [N, D] array of data values
+    ivar: [N, D] array of inverse variance values
+    K: dimensionality of the latent space
+    d: index of the dimension where we CARE ABOUT THE X-VAL
+    folds: number of folds to do (as in "k-fold cross-validation")
+    """
     N, D = data.shape
     subset = np.random.randint(folds, size=N)
     expectations = np.zeros((N, D))
     for ss in range(folds):
         leave_out = (subset == ss)
         print('starting fold: ', ss, np.sum(leave_out))
-        expectations[leave_out, :] = validate(data, ivar, K, leave_out)
+        expectations[leave_out, :] = validate(data, ivar, K, d, leave_out)
     return expectations
 
-def validate(data, ivar, K, leave_out):
+def validate(data, ivar, K, d, leave_out):
+    """
+    see `cross_validate()` for input descriptions
+    """
     N, D = data.shape
     print(np.sum(~leave_out))
     mu, A, G = HMF_train(data[~leave_out, :], ivar[~leave_out, :], K)
     xx = data[leave_out, :]
     yy = ivar[leave_out, :]
-    xx[:, 4] = np.median(data[:, 4])
-    yy[:, 4] = ivar[leave_out, 4] * 0.001
+    xx[:, d] = np.median(data[:, d])  # replace the dimension you care about
+    yy[:, d] = 0. * ivar[leave_out, d] # silence the dimension you care about
     expectation = HMF_test(mu, G, (xx), (yy))
     return expectation
-    
+
 def HMF_test(mu, G, newdata, newivar):
     N, D = newdata.shape
     assert newivar.shape == (N, D)
@@ -133,7 +143,7 @@ def HMF_initialize(data, ivar, K):
     G = v[:K, :]    
     return A, G
 
-def HMF_astep(data, ivar, G, regularize=True):
+def HMF_astep(data, ivar, G):
     """
     svd trick needs to be checked!
     """
@@ -143,13 +153,13 @@ def HMF_astep(data, ivar, G, regularize=True):
     A = np.zeros((N, K))
     
     for i in range(N):
-        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T)
+        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T) + np.eye(D) # prior
         F_vector = np.dot(G, ivar[i,:] * data[i,:])
         A[i, :] = np.linalg.solve(G_matrix, F_vector)
 
-    if regularize:
-        u, s, v = np.linalg.svd(A, full_matrices = False)
-        A = np.dot(u, v)
+    # now post-process A to have unit variance
+    u, s, v = np.linalg.svd(A, full_matrices = False)
+    A = np.dot(u, v)
     
     return A
 
