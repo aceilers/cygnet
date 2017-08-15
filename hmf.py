@@ -44,7 +44,7 @@ def Plot1to1(expectations, tr_label_input_new, tr_ivar_input, K, labels, Nlabels
         cannon = expectations[:, i]
         scatter = np.round(np.std(orig-cannon), 5)
         bias = np.round(np.mean(orig-cannon), 5)  
-        chi2 = np.round(np.sum(0.5*(orig-cannon)**2 * tr_ivar_input[:, i]), 2)
+        chi2 = np.round(np.sum((orig-cannon)**2 * tr_ivar_input[:, i]), 2)
         fig = plt.figure(figsize=(7, 6))
         cmap = 'viridis'
         plt.scatter(orig, cannon, c=tr_ivar_input[:, i], label=' bias = {0} \n scatter = {1}'.format(bias, scatter), marker = 'o', cmap = cmap, vmin = np.percentile(tr_ivar_input[:, i], 2.5), vmax = np.percentile(tr_ivar_input[:, i], 97.5))
@@ -65,20 +65,22 @@ def cross_validate(data, ivar, K, folds):
     N, D = data.shape
     subset = np.random.randint(folds, size=N)
     expectations = np.zeros((N, D))
-    A, G = None, None
     for ss in range(folds):
-        print(ss)
         leave_out = (subset == ss)
-        expectations[leave_out, :], A, G = validate(data, ivar, K, leave_out, A, G)
+        print('starting fold: ', ss, np.sum(leave_out))
+        expectations[leave_out, :] = validate(data, ivar, K, leave_out)
     return expectations
 
-def validate(data, ivar, K, leave_out, A, G):
+def validate(data, ivar, K, leave_out):
     N, D = data.shape
-    indices = np.arange(N)
-    train = indices[np.logical_not(leave_out)]
-    mu, A, G = HMF(data[train, :], ivar[train, :], K, A, G)
-    expectation = HMF_test(mu, G, (data[leave_out, :]), (ivar[leave_out, :]))
-    return expectation, A, G
+    print(np.sum(~leave_out))
+    mu, A, G = HMF_train(data[~leave_out, :], ivar[~leave_out, :], K)
+    xx = data[leave_out, :]
+    yy = ivar[leave_out, :]
+    xx[:, 4] = 0.2370302437901497
+    yy[:, 4] = ivar[leave_out, 4] * 0.001
+    expectation = HMF_test(mu, G, (xx), (yy))
+    return expectation
     
 def HMF_test(mu, G, newdata, newivar):
     N, D = newdata.shape
@@ -87,7 +89,7 @@ def HMF_test(mu, G, newdata, newivar):
     A = HMF_astep(data, newivar, G, regularize=False)
     return mu + np.dot(A, G)
 
-def HMF(inputdata, ivar, K, A = None, G = None):
+def HMF_train(inputdata, ivar, K, A = None, G = None):
     """
     Bugs:
         - not commented
@@ -202,6 +204,15 @@ fluxes = spectra[:, :, 1].T
 ivars = (1./(spectra[:, :, 2]**2)).T 
         
 # -------------------------------------------------------------------------------
+# remove duplicates
+# -------------------------------------------------------------------------------
+        
+foo, idx = np.unique(training_labels['APOGEE_ID'], return_index = True)
+training_labels = training_labels[idx]
+fluxes = fluxes[idx, :]
+ivars = ivars[idx, :]
+        
+# -------------------------------------------------------------------------------
 # data masking
 # -------------------------------------------------------------------------------
         
@@ -209,6 +220,24 @@ masking = training_labels['K'] < 0.
 training_labels = training_labels[~masking]
 fluxes = fluxes[~masking]
 ivars = ivars[~masking]
+
+'''
+masking2 = (training_labels['LOGG'] <= 2.2) * \
+           (training_labels['LOGG'] >= 0) * \
+           (training_labels['TEFF'] > 4300.)
+training_labels = training_labels[masking2]
+fluxes = fluxes[masking2]
+ivars = ivars[masking2]
+'''
+
+# -------------------------------------------------------------------------------
+# scaling!
+# -------------------------------------------------------------------------------
+#ivots = np.median(foo, axis=blah)
+#scales = np.std(foo, axis=blah) # be careful
+#scales[scales <= 0.] = 1. # brittle
+#sdata = (data - pivots) / scales
+#sivars = ...
 
 # -------------------------------------------------------------------------------
 # calculate K_MAG_ABS and Q
@@ -265,7 +294,7 @@ def make_label_input(labels, training_labels):
     tr_ivar_input[bad, 0] = 0.  
     bad = tr_label_input[:, 5] < -0.6
     tr_label_input[bad, 5] = np.median(tr_label_input[:, 5])
-    tr_ivar_input[bad, 5] = 0.                   
+    tr_ivar_input[bad, 5] = 0.     
     return tr_label_input, tr_ivar_input
 
 labels = np.array(['TEFF', 'FE_H', 'LOGG', 'ALPHA_M', 'Q_MAG', 'N_FE', 'C_FE'])
@@ -289,24 +318,37 @@ ivars = ivars[input_ids, :]
 # HMF
 # -------------------------------------------------------------------------------
 
-data = np.concatenate((tr_label_input, fluxes), axis=1)
-ivar = np.concatenate((tr_ivar_input, ivars), axis=1)
+nodata = True
+if nodata:
+    data = 1. * tr_label_input
+    ivar = 1. * tr_ivar_input
+else:
+    data = np.concatenate((tr_label_input, fluxes), axis=1)
+    ivar = np.concatenate((tr_ivar_input, ivars), axis=1)
 
 np.random.seed(42)
 
 folds = 5
-K = 3
-name = 'train162'
+K = 1 # has to be less than the number of dimensions
+name = 'nodata_ivartest1e3_testdatamedian'
+
+
+N, D = data.shape
+noisify = False
+if noisify:
+    name += '_noise'
+    adderr = 0.05
+    data[:, 4] += adderr * np.random.normal(size = N)
+    ivar[:, 4] = 1. / (1. / ivar[:, 4] + adderr * adderr) # brittle
 
 # cross validation
-for i in range(10):
+for i in range(5):
     expectations = cross_validate(data, ivar, K, folds)
-    Plot1to1(expectations, tr_label_input, tr_ivar_input, K, labels, Nlabels, name)
+    Plot1to1(expectations, data, ivar, K, labels, Nlabels, name)
     f = open('plots/results_data/data_K{0}_{1}.pickle'.format(K, name), 'w')
     pickle.dump(expectations, f)
     f.close()
-    K += 2    
+    K += 1    
 
 # -------------------------------------------------------------------------------'''
-
 
