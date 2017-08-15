@@ -92,10 +92,21 @@ def validate(data, ivar, K, d, leave_out):
     expectation = HMF_test(mu, G, (xx), (yy))
     return expectation
 
-def HMF_test(mu, G, newdata, newivar):
+def HMF_test(mu, G, newdata, ivar):
+    """
+    This function repeats some functionality in `HMF_astep()`. That sucks, but
+    I don't want to mess with `HMF_astep()`
+    """
+    K, DD = G.shape
     N, D = newdata.shape
-    assert newivar.shape == (N, D)
+    assert D == DD    
+    assert ivar.shape == (N, D)
     data = newdata - mu[None, :]
+    A = np.zeros((N, K))
+    for i in range(N):
+        G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T) + np.eye(K) # prior
+        F_vector = np.dot(G, ivar[i, :] * data[i, :])
+        A[i, :] = np.linalg.solve(G_matrix, F_vector)
     A = HMF_astep(data, newivar, G)
     return mu + np.dot(A, G)
 
