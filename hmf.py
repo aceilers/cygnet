@@ -77,7 +77,7 @@ def validate(data, ivar, K, leave_out):
     mu, A, G = HMF_train(data[~leave_out, :], ivar[~leave_out, :], K)
     xx = data[leave_out, :]
     yy = ivar[leave_out, :]
-    xx[:, 4] = 0.2370302437901497
+    xx[:, 4] = np.median(data[:, 4])
     yy[:, 4] = ivar[leave_out, 4] * 0.001
     expectation = HMF_test(mu, G, (xx), (yy))
     return expectation
