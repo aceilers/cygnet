@@ -180,10 +180,12 @@ def HMF_gstep(data, ivar, A):
     
     return G
 
-def HMF_chisq(data, ivar, A, G):    
-    resid = data - np.dot(A, G)    
-    return np.sum(resid * ivar * resid)
-
+def HMF_chisq(data, ivar, A, G):
+    """
+    needs to be synchronized with the prior in `HMF_astep()`
+    """
+    resid = data - np.dot(A, G)
+    return np.sum(resid * ivar * resid) + np.sum(A * A)
 
 def DataExpectation(mu, A, G, Nlabels):
     
