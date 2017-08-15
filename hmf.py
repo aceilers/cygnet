@@ -1,9 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Aug  7 17:08:44 2017
-
-@author: eilers
-"""
 
 """
 This file is part of the cygnet project.
@@ -107,7 +101,7 @@ def HMF_test(mu, G, newdata, ivar):
         G_matrix = np.dot(G, (ivar[i, :])[:, None] * G.T) + np.eye(K) # prior
         F_vector = np.dot(G, ivar[i, :] * data[i, :])
         A[i, :] = np.linalg.solve(G_matrix, F_vector)
-    A = HMF_astep(data, newivar, G)
+    A = HMF_astep(data, ivar, G)
     return mu + np.dot(A, G)
 
 def HMF_train(inputdata, ivar, K, A = None, G = None):
@@ -353,7 +347,7 @@ np.random.seed(42)
 
 folds = 5
 K = 1 # has to be less than the number of dimensions
-name = 'ivartest0_testdatamedian'
+name = 'new_nodata_testivar0'
 
 
 N, D = data.shape
